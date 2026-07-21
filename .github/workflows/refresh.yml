@@ -1,0 +1,29 @@
+name: Refresh telemetry
+
+on:
+  schedule:
+    - cron: "39 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pull analytics and regenerate DATA block
+        env:
+          CLOUDFLARE_READ_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
+        run: python3 scripts/refresh.py
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet; then
+            echo "No changes to publish"
+          else
+            git config user.name "telemetry-bot"
+            git config user.email "13952844+RobGruhl@users.noreply.github.com"
+            git commit -am "Telemetry refresh $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
