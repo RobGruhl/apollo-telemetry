@@ -104,8 +104,12 @@ def main():
     today = now.date()
     midnight = f"{today}T00:00:00Z"
 
+    # Committed history survives Cloudflare's short free-plan retention.
+    hist_path = os.path.join(os.path.dirname(__file__), "..", "data", "history.json")
+    history = json.load(open(hist_path)) if os.path.exists(hist_path) else {}
+
     # Free-plan adaptive queries are capped at a 1-day range, so fetch each day separately.
-    days, by_day = [], {}
+    days = []
     for i in range(6, -1, -1):
         d = today - timedelta(days=i)
         if str(d) < TELEMETRY_START:
@@ -114,18 +118,20 @@ def main():
         rows = adaptive(ZONE_APOLLO,
                         f'datetime_geq: "{d}T00:00:00Z", datetime_lt: "{d + timedelta(days=1)}T00:00:00Z", '
                         f'{SCOUT_FILTER}', "date")
-        v = sum(g["sum"]["visits"] for g in rows)
-        by_day[str(d)] = v
+        v = max(sum(g["sum"]["visits"] for g in rows), history.get(str(d), 0))
+        history[str(d)] = v
         days.append({"d": d.strftime("%b %-d"), "v": v})
 
-    countries = [
-        {"flag": flag(g["dimensions"]["clientCountryName"]),
-         "name": COUNTRY_NAMES.get(g["dimensions"]["clientCountryName"], g["dimensions"]["clientCountryName"]),
-         "v": g["sum"]["visits"]}
-        for g in adaptive(ZONE_APOLLO, f'datetime_geq: "{midnight}", {HUMAN_FILTER}',
-                          "clientCountryName", order="sum_visits_DESC")
-        if g["sum"]["visits"] > 0
-    ]
+    os.makedirs(os.path.dirname(hist_path), exist_ok=True)
+    json.dump(history, open(hist_path, "w"), indent=1, sort_keys=True)
+    by_day = history
+    total_since_start = sum(history.values())
+
+    country_rows = [g for g in adaptive(ZONE_APOLLO, f'datetime_geq: "{midnight}", {HUMAN_FILTER}',
+                                        "clientCountryName", order="sum_visits_DESC")
+                    if g["sum"]["visits"] > 0]
+    bot_countries = " · ".join(f"{flag(g['dimensions']['clientCountryName'])} {g['sum']['visits']}"
+                               for g in country_rows)
 
     raw_pages = adaptive(ZONE_APOLLO, f'datetime_geq: "{midnight}", {SCOUT_FILTER}',
                          "clientRequestPath", order="count_DESC")
@@ -145,6 +151,9 @@ def main():
     pages = page_rows[:11 if completion_row else 12]
     if completion_row:
         pages.append(completion_row)
+    page_loads = sum(g["count"] for g in raw_pages
+                     if g["dimensions"]["clientRequestPath"] == "/"
+                     or g["dimensions"]["clientRequestPath"].endswith(".html"))
 
     rollup = gql(f'{{ viewer {{ zones(filter: {{zoneTag: "{ZONE_APOLLO}"}}) {{ '
                  f'httpRequests1dGroups(limit: 5, filter: {{date: "{today}"}}) '
@@ -156,10 +165,9 @@ def main():
     filtered_out = max(0, all_reqs - sum(
         g["count"] for g in adaptive(ZONE_APOLLO, f'datetime_geq: "{midnight}", {HUMAN_FILTER}',
                                      "clientCountryName", limit=50)))
-    noise = (f"Filtered out today: {filtered_out} requests from scanners, crawlers, and other "
-             f"automated clients (secrets probes all get 404s — the site is static and hosts no "
-             f"secrets). Only real-browser sessions count above.") if filtered_out else \
-        "No bot traffic filtered today."
+    noise = (f"{filtered_out} obvious-bot requests were rejected outright today (secrets probes, "
+             f"headless browsers, scripted clients — all harmless on a static site).") if filtered_out \
+        else "No obvious bot traffic today."
 
     ws = adaptive(ZONE_SKELETON, f'datetime_geq: "{midnight}", {HUMAN_FILTER}', "", limit=5)
     ws_visits = sum(g["sum"]["visits"] for g in ws)
@@ -173,13 +181,13 @@ def main():
         "snapshotLocal": ct.strftime("%b %-d · %H:%M CT"),
         "snapshotUTC": now.strftime("%Y-%m-%dT%H:%MZ"),
         "yMax": y_max,
-        "tiles": {"visits": visits_today, "allVerified": all_verified, "uniques": uniques,
-                  "completions": completions},
+        "tiles": {"visits": visits_today, "completions": completions,
+                  "pageLoads": page_loads, "total": total_since_start},
+        "bots": {"allVerified": all_verified, "uniques": uniques, "rawRequests": all_reqs,
+                 "countries": bot_countries, "noise": noise},
         "wsVisits": ws_visits,
-        "noiseNote": noise,
         "days": days,
         "pages": pages,
-        "countries": countries,
     }
 
     path = os.path.join(os.path.dirname(__file__), "..", "index.html")
@@ -192,7 +200,7 @@ def main():
         print("no change")
         return
     open(path, "w").write(out)
-    print(f"refreshed: {visits_today} mobile visits ({all_verified} all-device), {len(countries)} countries, "
+    print(f"refreshed: {visits_today} mobile visits today, {total_since_start} total, "
           f"{completions} completions, ws {ws_visits}")
 
 
