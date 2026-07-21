@@ -7,6 +7,8 @@ read-only analytics token from CLOUDFLARE_READ_TOKEN. Stdlib only.
 import json
 import os
 import re
+import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -23,6 +25,8 @@ HUMAN_FILTER = (
     '{userAgent_notlike: "%spider%"}, {userAgent_notlike: "%crawl%"}]'
 )
 
+SCOUT_FILTER = HUMAN_FILTER + ', clientDeviceType: "mobile", clientCountryName: "US"'
+
 DECISION_NUMBERS = {  # slide number -> decision number (CLAUDE.md slide inventory)
     "04": 1, "05": 2, "06": 3, "09": 4, "11": 5,
     "12": 6, "13": 7, "16": 8, "17": 9, "18": 10,
@@ -37,14 +41,24 @@ COUNTRY_NAMES = {
 }
 
 
-def gql(query):
+def gql(query, tries=4):
     req = urllib.request.Request(
         "https://api.cloudflare.com/client/v4/graphql",
         data=json.dumps({"query": query}).encode(),
         headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        out = json.load(resp)
+    out = None
+    for attempt in range(tries):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                out = json.load(resp)
+            break
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < tries - 1:
+                time.sleep(20 * (attempt + 1))
+                continue
+            raise
+    assert out is not None
     if out.get("errors"):
         raise RuntimeError(f"GraphQL error: {out['errors']}")
     return out["data"]["viewer"]["zones"][0]
@@ -99,7 +113,7 @@ def main():
             continue
         rows = adaptive(ZONE_APOLLO,
                         f'datetime_geq: "{d}T00:00:00Z", datetime_lt: "{d + timedelta(days=1)}T00:00:00Z", '
-                        f'{HUMAN_FILTER}', "date")
+                        f'{SCOUT_FILTER}', "date")
         v = sum(g["sum"]["visits"] for g in rows)
         by_day[str(d)] = v
         days.append({"d": d.strftime("%b %-d"), "v": v})
@@ -113,8 +127,10 @@ def main():
         if g["sum"]["visits"] > 0
     ]
 
-    raw_pages = adaptive(ZONE_APOLLO, f'datetime_geq: "{midnight}", {HUMAN_FILTER}',
+    raw_pages = adaptive(ZONE_APOLLO, f'datetime_geq: "{midnight}", {SCOUT_FILTER}',
                          "clientRequestPath", order="count_DESC")
+    all_verified = sum(g["sum"]["visits"] for g in adaptive(
+        ZONE_APOLLO, f'datetime_geq: "{midnight}", {HUMAN_FILTER}', "clientDeviceType"))
     page_rows, completion_row, completions = [], None, 0
     for g in raw_pages:
         p = g["dimensions"]["clientRequestPath"]
@@ -151,16 +167,14 @@ def main():
     visits_today = by_day.get(str(today), 0) or 0
     y_max = next(m for m in (20, 50, 100, 200, 500, 1000)
                  if m > max((d["v"] or 0) for d in days))
-    csub = (" + ".join(c["name"] for c in countries[:3])) if len(countries) <= 3 else \
-        f"{countries[0]['name']} + {len(countries) - 1} more"
     ct = now - timedelta(hours=5)  # Central Daylight Time
 
     data = {
         "snapshotLocal": ct.strftime("%b %-d · %H:%M CT"),
         "snapshotUTC": now.strftime("%Y-%m-%dT%H:%MZ"),
         "yMax": y_max,
-        "tiles": {"visits": visits_today, "uniques": uniques, "countries": len(countries),
-                  "countriesSub": csub, "completions": completions},
+        "tiles": {"visits": visits_today, "allVerified": all_verified, "uniques": uniques,
+                  "completions": completions},
         "wsVisits": ws_visits,
         "noiseNote": noise,
         "days": days,
@@ -178,7 +192,7 @@ def main():
         print("no change")
         return
     open(path, "w").write(out)
-    print(f"refreshed: {visits_today} visits, {len(countries)} countries, "
+    print(f"refreshed: {visits_today} mobile visits ({all_verified} all-device), {len(countries)} countries, "
           f"{completions} completions, ws {ws_visits}")
 
 
