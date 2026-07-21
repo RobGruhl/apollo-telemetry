@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Apollo 13 · Visitor Telemetry</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f3f4f1;
+    --card: #fbfbf9;
+    --ink: #151a20;
+    --ink-2: #5a6169;
+    --muted: #8b9096;
+    --grid: #e3e4df;
+    --baseline: #c6c8c2;
+    --ring: rgba(21, 26, 32, 0.10);
+    --accent: #8f6a1d;
+    --series: #2a78d6;
+    --series-soft: rgba(42, 120, 214, 0.14);
+    --good: #006300;
+    --good-dot: #0ca30c;
+    --tip-bg: #151a20;
+    --tip-ink: #f2f4f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0b0e13;
+      --card: #141a22;
+      --ink: #f2f4f6;
+      --ink-2: #a9b2bc;
+      --muted: #79818b;
+      --grid: #242b34;
+      --baseline: #333b46;
+      --ring: rgba(242, 244, 246, 0.10);
+      --accent: #e3a44a;
+      --series: #3987e5;
+      --series-soft: rgba(57, 135, 229, 0.18);
+      --good: #0ca30c;
+      --good-dot: #0ca30c;
+      --tip-bg: #f2f4f6;
+      --tip-ink: #151a20;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0b0e13;
+    --card: #141a22;
+    --ink: #f2f4f6;
+    --ink-2: #a9b2bc;
+    --muted: #79818b;
+    --grid: #242b34;
+    --baseline: #333b46;
+    --ring: rgba(242, 244, 246, 0.10);
+    --accent: #e3a44a;
+    --series: #3987e5;
+    --series-soft: rgba(57, 135, 229, 0.18);
+    --good: #0ca30c;
+    --good-dot: #0ca30c;
+    --tip-bg: #f2f4f6;
+    --tip-ink: #151a20;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --page: #f3f4f1;
+    --card: #fbfbf9;
+    --ink: #151a20;
+    --ink-2: #5a6169;
+    --muted: #8b9096;
+    --grid: #e3e4df;
+    --baseline: #c6c8c2;
+    --ring: rgba(21, 26, 32, 0.10);
+    --accent: #8f6a1d;
+    --series: #2a78d6;
+    --series-soft: rgba(42, 120, 214, 0.14);
+    --good: #006300;
+    --good-dot: #0ca30c;
+    --tip-bg: #151a20;
+    --tip-ink: #f2f4f6;
+  }
+
+  body {
+    background: var(--page);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.5;
+    margin: 0;
+    padding: 0 20px 56px;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; }
+  .mono { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; }
+
+  header { padding: 40px 0 20px; }
+  .eyebrow {
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 6px;
+  }
+  h1 {
+    font-size: clamp(26px, 4.5vw, 36px);
+    font-weight: 750;
+    letter-spacing: -0.015em;
+    margin: 0 0 8px;
+    text-wrap: balance;
+  }
+  .meta { color: var(--ink-2); font-size: 14px; margin: 0; }
+  .meta .mono { font-size: 13px; }
+
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 26px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12.5px; font-weight: 550;
+    color: var(--ink-2);
+    background: var(--card);
+    border: 1px solid var(--ring);
+    border-radius: 999px;
+    padding: 5px 12px;
+  }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good-dot); }
+  .pill strong { color: var(--good); font-weight: 650; }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  @media (max-width: 720px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+  .tile {
+    background: var(--card);
+    border: 1px solid var(--ring);
+    border-radius: 10px;
+    padding: 16px 18px 14px;
+  }
+  .tile .label {
+    font-size: 11.5px; font-weight: 650;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 6px;
+  }
+  .tile .value { font-size: 34px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.1; margin: 0; }
+  .tile .sub { font-size: 12.5px; color: var(--ink-2); margin: 4px 0 0; }
+  .tile.hero .value { color: var(--series); }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--ring);
+    border-radius: 10px;
+    padding: 20px 22px 18px;
+    margin-bottom: 12px;
+  }
+  .card h2 { font-size: 15.5px; font-weight: 700; margin: 0 0 2px; }
+  .card .sub { font-size: 13px; color: var(--ink-2); margin: 0 0 14px; }
+
+  .chart-box { position: relative; }
+  .chart-box svg { display: block; width: 100%; height: auto; }
+  .tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--tip-bg);
+    color: var(--tip-ink);
+    font-size: 12.5px;
+    line-height: 1.4;
+    border-radius: 7px;
+    padding: 7px 10px;
+    opacity: 0;
+    transition: opacity 120ms ease;
+    white-space: nowrap;
+    transform: translate(-50%, calc(-100% - 10px));
+  }
+  @media (prefers-reduced-motion: reduce) { .tooltip { transition: none; } }
+  .tooltip.on { opacity: 1; }
+  .tooltip .t-val { font-weight: 700; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th {
+    text-align: left; font-size: 11px; font-weight: 650;
+    letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--muted);
+    padding: 0 0 8px;
+    border-bottom: 1px solid var(--grid);
+  }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td { padding: 7px 0; border-bottom: 1px solid var(--grid); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  .pagebar {
+    display: inline-block; height: 5px; border-radius: 3px;
+    background: var(--series); vertical-align: middle;
+    min-width: 3px;
+  }
+  .rowlabel { display: flex; flex-direction: column; gap: 3px; padding-right: 14px; }
+  .rowlabel .name { font-weight: 550; }
+  .rowlabel .path { font-size: 11.5px; color: var(--muted); }
+  .flag { margin-right: 7px; }
+  .row-note { font-size: 12px; color: var(--muted); padding-top: 10px; }
+
+  .notes { font-size: 13.5px; color: var(--ink-2); }
+  .notes h2 { color: var(--ink); }
+  .notes ul { margin: 0; padding-left: 18px; }
+  .notes li { margin-bottom: 7px; }
+  .notes li:last-child { margin-bottom: 0; }
+  .notes strong { color: var(--ink); font-weight: 650; }
+
+  footer {
+    margin-top: 26px;
+    font-size: 12.5px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Apollo 13 · apollo13.quest</p>
+    <h1>Mission Telemetry</h1>
+    <p class="meta">Visitor analytics via Cloudflare edge · counting began <span class="mono">Jul 21, 2026 · 10:14 CT</span> · snapshot <span class="mono">Jul 21 · 10:48 CT</span></p>
+  </header>
+
+  <div class="pills">
+    <span class="pill"><span class="dot"></span>Cloudflare proxy <strong>Active</strong></span>
+    <span class="pill"><span class="dot"></span>TLS <strong>Full (strict)</strong></span>
+    <span class="pill"><span class="dot"></span>Analytics <strong>Live</strong></span>
+    <span class="pill"><span class="dot"></span>Bot filter <strong>On</strong></span>
+  </div>
+
+  <div class="tiles">
+    <div class="tile hero">
+      <p class="label">Verified visits</p>
+      <p class="value">8</p>
+      <p class="sub">human sessions today · bots excluded</p>
+    </div>
+    <div class="tile">
+      <p class="label">Unique devices</p>
+      <p class="value">6</p>
+      <p class="sub">raw count · includes crawlers</p>
+    </div>
+    <div class="tile">
+      <p class="label">Countries</p>
+      <p class="value">2</p>
+      <p class="sub">US, Ireland</p>
+    </div>
+    <div class="tile">
+      <p class="label">Mission completions</p>
+      <p class="value">1</p>
+      <p class="sub">reached the final slide 🏆</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Verified visits by day</h2>
+    <p class="sub">Real-browser sessions only — scanners, crawlers, and headless browsers removed. The jamboree crowd will fill this chart.</p>
+    <div class="chart-box" id="chartbox">
+      <svg id="chart" viewBox="0 0 960 240" role="img" aria-label="Bar chart of verified visits per day. Telemetry began July 21 with 8 verified visits; earlier days have no data."></svg>
+      <div class="tooltip" id="tip"></div>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <h2>Pages visited</h2>
+      <p class="sub">Successful page loads today — how far into the mission people got.</p>
+      <table>
+        <thead><tr><th>Page</th><th></th><th class="num">Loads</th></tr></thead>
+        <tbody id="pages"></tbody>
+      </table>
+      <p class="row-note">Repeat navigation is cached on-device by the service worker, so these counts skew toward first visits.</p>
+    </div>
+    <div class="card">
+      <h2>Where verified visits came from</h2>
+      <p class="sub">Sessions by country, today — bot-filtered.</p>
+      <table>
+        <thead><tr><th>Country</th><th></th><th class="num">Visits</th></tr></thead>
+        <tbody id="countries"></tbody>
+      </table>
+      <p class="row-note">Filtered out today: a Poland-based scanner probing for <span class="mono">/.env</span> secrets files (26 requests, all 404 — the site is static and hosts no secrets), a headless-browser speed-test crawl (41 requests), and assorted Go-language bots from the US, Belgium, and Malaysia. Only real-browser sessions count above.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Second site: walkingskeleton.org</h2>
+    <p class="sub">The Walking Skeleton tutorial — production-shaped software instincts for new developers, linked from the Apollo merit-badge pages.</p>
+    <div class="pills" style="margin: 0;">
+      <span class="pill"><span class="dot"></span>Domain <strong>Live</strong></span>
+      <span class="pill"><span class="dot"></span>GitHub Pages <strong>Serving</strong></span>
+      <span class="pill" style="opacity: 0.65;"><span class="dot" style="background: var(--muted);"></span>Analytics — pending Cloudflare zone setup</span>
+    </div>
+  </div>
+
+  <div class="card notes">
+    <h2>Reading the numbers</h2>
+    <ul>
+      <li><strong>Verified visits ≈ how many kids.</strong> Only successful sessions from real browsers count — failed requests, secrets probes, headless browsers, and known bot user-agents are excluded by the query itself. Each QR scan at the table lands here.</li>
+      <li><strong>The service worker hides repeat visits.</strong> After the first load, the whole site is cached on the phone, so a scout replaying the mission offline generates no new traffic. First visits are counted reliably; browsing depth is undercounted.</li>
+      <li><strong>Unique devices is the raw number.</strong> Cloudflare computes it before filtering, so crawlers are in it. When the two disagree, trust verified visits.</li>
+      <li><strong>This page refreshes itself every hour</strong> — a scheduled cloud agent pulls fresh Cloudflare analytics and publishes the update. The timestamps below tell you how fresh the numbers are.</li>
+    </ul>
+  </div>
+
+  <footer>
+    <span>Apollo 13 Interactive Experience · 2026 Elevate Scout Jamboree · NASA Tent, Apollo Table</span>
+    <span class="mono">SNAPSHOT 2026-07-21T15:48Z</span>
+  </footer>
+</div>
+
+<script>
+  // ===== DATA (baked at refresh time — update these consts + the tile values,
+  // snapshot timestamps, and country note above when regenerating) =====
+  const DAYS = [
+    { d: "Jul 15", v: null },
+    { d: "Jul 16", v: null },
+    { d: "Jul 17", v: null },
+    { d: "Jul 18", v: null },
+    { d: "Jul 19", v: null },
+    { d: "Jul 20", v: null },
+    { d: "Jul 21", v: 8 },
+  ];
+
+  const PAGES = [
+    { name: "Landing page", path: "/", v: 8 },
+    { name: "Computer restart", path: "/slides/19", v: 8 },
+    { name: "Merit badges hub", path: "/slides/31", v: 8 },
+    { name: "Space Exploration badge", path: "/slides/34", v: 6 },
+    { name: "Lifeboat Moon", path: "/slides/10", v: 4 },
+    { name: "Meet the presenter", path: "/slides/29", v: 4 },
+    { name: "Programming badge", path: "/slides/32", v: 4 },
+    { name: "Decision 7 · CO₂ mailbox", path: "/slides/13", v: 3 },
+    { name: "Decision 2 · Power conservation", path: "/slides/05", v: 2 },
+    { name: "Mission complete 🏆", path: "/slides/30", v: 1 },
+  ];
+
+  const COUNTRIES = [
+    { flag: "🇺🇸", name: "United States", v: 7 },
+    { flag: "🇮🇪", name: "Ireland", v: 1 },
+  ];
+
+  const Y_MAX = 20; // chart y-axis top; raise as jamboree traffic grows
+
+  // ---- daily bar chart ----
+  (function () {
+    const svg = document.getElementById("chart");
+    const NS = "http://www.w3.org/2000/svg";
+    const W = 960, H = 240, padL = 34, padR = 10, padT = 16, padB = 30;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const el = (tag, attrs) => {
+      const e = document.createElementNS(NS, tag);
+      for (const k in attrs) e.setAttribute(k, attrs[k]);
+      return e;
+    };
+    const css = v => getComputedStyle(document.body).getPropertyValue(v).trim();
+    const y = v => padT + plotH - (v / Y_MAX) * plotH;
+    const yTick = Math.ceil(Y_MAX / 4);
+
+    function draw() {
+      svg.innerHTML = "";
+      for (let g = 0; g <= Y_MAX; g += yTick) {
+        svg.appendChild(el("line", { x1: padL, x2: W - padR, y1: y(g), y2: y(g),
+          stroke: g === 0 ? css("--baseline") : css("--grid"), "stroke-width": 1 }));
+        const t = el("text", { x: padL - 8, y: y(g) + 4, "text-anchor": "end",
+          "font-size": 11, fill: css("--muted"), "font-family": "ui-monospace, Menlo, monospace" });
+        t.textContent = g;
+        svg.appendChild(t);
+      }
+      const slot = plotW / DAYS.length;
+      const barW = Math.min(46, slot * 0.42);
+      DAYS.forEach((day, i) => {
+        const cx = padL + slot * i + slot / 2;
+        const t = el("text", { x: cx, y: H - 9, "text-anchor": "middle",
+          "font-size": 11.5, fill: day.v === null ? css("--muted") : css("--ink-2") });
+        t.textContent = day.d;
+        svg.appendChild(t);
+
+        if (day.v === null) {
+          const dash = el("text", { x: cx, y: y(0) - 7, "text-anchor": "middle",
+            "font-size": 11, fill: css("--muted") });
+          dash.textContent = "·";
+          svg.appendChild(dash);
+        } else {
+          const barH = Math.max(3, (day.v / Y_MAX) * plotH);
+          svg.appendChild(el("rect", { x: cx - barW / 2, y: y(0) - barH,
+            width: barW, height: barH, rx: 4, ry: 4, fill: css("--series") }));
+          svg.appendChild(el("rect", { x: cx - barW / 2, y: y(0) - Math.min(4, barH),
+            width: barW, height: Math.min(4, barH), fill: css("--series") }));
+          const lbl = el("text", { x: cx, y: y(day.v) - 8, "text-anchor": "middle",
+            "font-size": 12.5, "font-weight": 700, fill: css("--ink") });
+          lbl.textContent = day.v;
+          svg.appendChild(lbl);
+        }
+        const band = el("rect", { x: padL + slot * i, y: padT, width: slot,
+          height: plotH, fill: "transparent" });
+        band.addEventListener("mouseenter", () => showTip(day, cx));
+        band.addEventListener("mouseleave", hideTip);
+        svg.appendChild(band);
+      });
+    }
+
+    const tip = document.getElementById("tip");
+    const box = document.getElementById("chartbox");
+    function showTip(day, cx) {
+      const rect = box.getBoundingClientRect();
+      const scale = rect.width / W;
+      tip.innerHTML = day.v === null
+        ? `${day.d}, 2026<br>Before telemetry began`
+        : `${day.d}, 2026<br><span class="t-val">${day.v} verified visits</span>`;
+      tip.style.left = (cx * scale) + "px";
+      tip.style.top = (padT * scale + 38) + "px";
+      tip.classList.add("on");
+    }
+    function hideTip() { tip.classList.remove("on"); }
+
+    draw();
+    new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+  })();
+
+  // ---- tables ----
+  (function () {
+    const pmax = Math.max(...PAGES.map(p => p.v));
+    document.getElementById("pages").innerHTML = PAGES.map(p => `
+      <tr>
+        <td><div class="rowlabel"><span class="name">${p.name}</span><span class="path mono">${p.path}</span></div></td>
+        <td style="width:30%"><span class="pagebar" style="width:${Math.round((p.v / pmax) * 100)}%"></span></td>
+        <td class="num">${p.v}</td>
+      </tr>`).join("");
+
+    const cmax = Math.max(...COUNTRIES.map(c => c.v));
+    document.getElementById("countries").innerHTML = COUNTRIES.map(c => `
+      <tr>
+        <td><span class="flag">${c.flag}</span>${c.name}</td>
+        <td style="width:34%"><span class="pagebar" style="width:${Math.round((c.v / cmax) * 100)}%"></span></td>
+        <td class="num">${c.v}</td>
+      </tr>`).join("");
+  })();
+</script>
+
+</body>
+</html>
