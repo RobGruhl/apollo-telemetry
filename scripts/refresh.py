@@ -27,6 +27,19 @@ HUMAN_FILTER = (
 
 SCOUT_FILTER = HUMAN_FILTER + ', clientDeviceType: "mobile", clientCountryName: "US"'
 
+# Score-census pings are deliberate 404s at /ping/completion/<score> — status filter
+# must not apply; UA/device/country filters still keep bots out of the census.
+UA_FILTER = HUMAN_FILTER.split("AND:", 1)[1]
+PING_FILTER = ('clientRequestPath_like: "/ping/completion/%", '
+               'clientDeviceType: "mobile", clientCountryName: "US", AND:' + UA_FILTER)
+
+RANKS = [  # (min score, max score, emoji, name) — mirror app.js getScoreRank tiers
+    (10, 10, "🏆", "Mission Commander"),
+    (8, 9, "⭐", "Flight Director"),
+    (6, 7, "🎯", "Flight Controller"),
+    (0, 5, "📡", "Ground Crew"),
+]
+
 DECISION_NUMBERS = {  # slide number -> decision number (CLAUDE.md slide inventory)
     "04": 1, "05": 2, "06": 3, "09": 4, "11": 5,
     "12": 6, "13": 7, "16": 8, "17": 9, "18": 10,
@@ -106,7 +119,11 @@ def main():
 
     # Committed history survives Cloudflare's short free-plan retention.
     hist_path = os.path.join(os.path.dirname(__file__), "..", "data", "history.json")
-    history = json.load(open(hist_path)) if os.path.exists(hist_path) else {}
+    raw_hist = json.load(open(hist_path)) if os.path.exists(hist_path) else {}
+    if "mobileVisits" not in raw_hist:  # migrate original flat {date: visits} format
+        raw_hist = {"mobileVisits": raw_hist, "scores": {}}
+    history = raw_hist["mobileVisits"]
+    score_hist = raw_hist.setdefault("scores", {})
 
     # Free-plan adaptive queries are capped at a 1-day range, so fetch each day separately.
     days = []
@@ -122,10 +139,32 @@ def main():
         history[str(d)] = v
         days.append({"d": d.strftime("%b %-d"), "v": v})
 
+    # Score census: count today's completion pings by score, merge into history.
+    todays_scores = {}
+    for g in adaptive(ZONE_APOLLO, f'datetime_geq: "{midnight}", {PING_FILTER}',
+                      "clientRequestPath", limit=30):
+        m = re.search(r"/ping/completion/(\d+)$", g["dimensions"]["clientRequestPath"])
+        if m and 0 <= int(m.group(1)) <= 10:
+            todays_scores[m.group(1)] = todays_scores.get(m.group(1), 0) + g["count"]
+    day_scores = score_hist.setdefault(str(today), {})
+    for score, n in todays_scores.items():
+        day_scores[score] = max(day_scores.get(score, 0), n)
+
     os.makedirs(os.path.dirname(hist_path), exist_ok=True)
-    json.dump(history, open(hist_path, "w"), indent=1, sort_keys=True)
+    json.dump({"mobileVisits": history, "scores": score_hist},
+              open(hist_path, "w"), indent=1, sort_keys=True)
     by_day = history
     total_since_start = sum(history.values())
+
+    rank_totals = []
+    all_scores = {}
+    for day in score_hist.values():
+        for score, n in day.items():
+            all_scores[int(score)] = all_scores.get(int(score), 0) + n
+    for lo, hi, emoji, name in RANKS:
+        rank_totals.append({"emoji": emoji, "name": name,
+                            "v": sum(n for sc, n in all_scores.items() if lo <= sc <= hi)})
+    completions_today = sum(todays_scores.values())
 
     country_rows = [g for g in adaptive(ZONE_APOLLO, f'datetime_geq: "{midnight}", {HUMAN_FILTER}',
                                         "clientCountryName", order="sum_visits_DESC")
@@ -181,8 +220,9 @@ def main():
         "snapshotLocal": ct.strftime("%b %-d · %H:%M CT"),
         "snapshotUTC": now.strftime("%Y-%m-%dT%H:%MZ"),
         "yMax": y_max,
-        "tiles": {"visits": visits_today, "completions": completions,
+        "tiles": {"visits": visits_today, "completions": completions_today,
                   "pageLoads": page_loads, "total": total_since_start},
+        "ranks": rank_totals,
         "bots": {"allVerified": all_verified, "uniques": uniques, "rawRequests": all_reqs,
                  "countries": bot_countries, "noise": noise},
         "wsVisits": ws_visits,
