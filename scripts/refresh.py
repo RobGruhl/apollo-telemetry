@@ -114,8 +114,9 @@ def friendly_page(path):
 
 def main():
     now = datetime.now(timezone.utc)
-    today = now.date()
-    midnight = f"{today}T00:00:00Z"
+    # "Today" means Central Time (UTC-5) — jamboree evenings must not reset at 7 PM local.
+    today = (now - timedelta(hours=5)).date()
+    midnight = f"{today}T05:00:00Z"
 
     # Committed history survives Cloudflare's short free-plan retention.
     hist_path = os.path.join(os.path.dirname(__file__), "..", "data", "history.json")
@@ -133,7 +134,7 @@ def main():
             days.append({"d": d.strftime("%b %-d"), "v": None})
             continue
         rows = adaptive(ZONE_APOLLO,
-                        f'datetime_geq: "{d}T00:00:00Z", datetime_lt: "{d + timedelta(days=1)}T00:00:00Z", '
+                        f'datetime_geq: "{d}T05:00:00Z", datetime_lt: "{d + timedelta(days=1)}T05:00:00Z", '
                         f'{SCOUT_FILTER}', "date")
         v = max(sum(g["sum"]["visits"] for g in rows), history.get(str(d), 0))
         history[str(d)] = v
