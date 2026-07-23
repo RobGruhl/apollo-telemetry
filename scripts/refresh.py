@@ -33,6 +33,22 @@ UA_FILTER = HUMAN_FILTER.split("AND:", 1)[1]
 PING_FILTER = ('clientRequestPath_like: "/ping/completion/%", '
                'clientDeviceType: "mobile", clientCountryName: "US", AND:' + UA_FILTER)
 
+# Per-page view census (added 2026-07-22): every page pings /ping/view/<page>
+# once per device on first real view — the only page count the service worker
+# cache can't distort. Same deliberate-404 mechanics as the score census.
+VIEW_FILTER = ('clientRequestPath_like: "/ping/view/%", '
+               'clientDeviceType: "mobile", clientCountryName: "US", AND:' + UA_FILTER)
+
+
+def view_path(ping_id):
+    """Map a view-ping id back to the page path ('slides-04-x' -> '/slides/04-x.html')."""
+    if ping_id == "index":
+        return "/"
+    for sub in ("slides", "explore"):
+        if ping_id.startswith(sub + "-"):
+            return f"/{sub}/{ping_id[len(sub) + 1:]}.html"
+    return f"/{ping_id}.html"
+
 RANKS = [  # (min score, max score, emoji, name) — mirror app.js getScoreRank tiers
     (10, 10, "🏆", "Mission Commander"),
     (8, 9, "⭐", "Flight Director"),
@@ -173,16 +189,17 @@ def main():
     bot_countries = " · ".join(f"{flag(g['dimensions']['clientCountryName'])} {g['sum']['visits']}"
                                for g in country_rows)
 
-    raw_pages = adaptive(ZONE_APOLLO, f'datetime_geq: "{midnight}", {SCOUT_FILTER}',
-                         "clientRequestPath", order="count_DESC")
+    raw_pages = adaptive(ZONE_APOLLO, f'datetime_geq: "{midnight}", {VIEW_FILTER}',
+                         "clientRequestPath", order="count_DESC", limit=60)
     all_verified = sum(g["sum"]["visits"] for g in adaptive(
         ZONE_APOLLO, f'datetime_geq: "{midnight}", {HUMAN_FILTER}', "clientDeviceType"))
-    page_rows, completion_row, completions = [], None, 0
+    page_rows, completion_row, completions, page_loads = [], None, 0, 0
     for g in raw_pages:
-        p = g["dimensions"]["clientRequestPath"]
-        if not (p == "/" or p.endswith(".html")):
+        m = re.match(r"/ping/view/([\w-]+)$", g["dimensions"]["clientRequestPath"])
+        if not m:
             continue
-        name, label = friendly_page(p)
+        name, label = friendly_page(view_path(m.group(1)))
+        page_loads += g["count"]
         row = {"name": name, "path": label, "v": g["count"]}
         if label == "/slides/30":
             completion_row, completions = row, g["count"]
@@ -191,9 +208,6 @@ def main():
     pages = page_rows[:11 if completion_row else 12]
     if completion_row:
         pages.append(completion_row)
-    page_loads = sum(g["count"] for g in raw_pages
-                     if g["dimensions"]["clientRequestPath"] == "/"
-                     or g["dimensions"]["clientRequestPath"].endswith(".html"))
 
     rollup = gql(f'{{ viewer {{ zones(filter: {{zoneTag: "{ZONE_APOLLO}"}}) {{ '
                  f'httpRequests1dGroups(limit: 5, filter: {{date: "{today}"}}) '
