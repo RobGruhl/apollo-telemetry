@@ -148,20 +148,32 @@ def main():
     history = raw_hist["mobileVisits"]
     score_hist = raw_hist.setdefault("scores", {})
     trail_hist = raw_hist.setdefault("trailScores", {})
+    hourly_hist = raw_hist.setdefault("mobileVisitsHourly", {})
 
     # Free-plan adaptive queries are capped at a 1-day range, so fetch each day separately.
     days = []
     for i in range(6, -1, -1):
         d = today - timedelta(days=i)
         if str(d) < TELEMETRY_START:
-            days.append({"d": d.strftime("%b %-d"), "v": None})
+            days.append({"d": d.strftime("%b %-d"), "v": None, "h": None})
             continue
-        rows = adaptive(ZONE_APOLLO,
-                        f'datetime_geq: "{d}T05:00:00Z", datetime_lt: "{d + timedelta(days=1)}T05:00:00Z", '
-                        f'{SCOUT_FILTER}', "date")
+        day_range = (f'datetime_geq: "{d}T05:00:00Z", '
+                     f'datetime_lt: "{d + timedelta(days=1)}T05:00:00Z", ')
+        rows = adaptive(ZONE_APOLLO, day_range + SCOUT_FILTER, "date")
         v = max(sum(g["sum"]["visits"] for g in rows), history.get(str(d), 0))
         history[str(d)] = v
-        days.append({"d": d.strftime("%b %-d"), "v": v})
+
+        # Hourly curve for the same CT day (24 slots, midnight–midnight CT).
+        # Committed history outlives Cloudflare's retention; per-hour max guards
+        # against a lagging edge query eroding an already-recorded hour.
+        hours = list(hourly_hist.get(str(d), [0] * 24))
+        for g in adaptive(ZONE_APOLLO, day_range + SCOUT_FILTER, "datetimeHour", limit=30):
+            utc_h = int(g["dimensions"]["datetimeHour"][11:13])
+            ct_h = (utc_h - 5) % 24
+            hours[ct_h] = max(hours[ct_h], g["sum"]["visits"])
+        if any(hours):
+            hourly_hist[str(d)] = hours
+        days.append({"d": d.strftime("%b %-d"), "v": v, "h": hours if any(hours) else None})
 
     # Score census: count today's completion pings by score, merge into history.
     todays_scores = {}
@@ -186,7 +198,8 @@ def main():
         trail_day[score] = max(trail_day.get(score, 0), n)
 
     os.makedirs(os.path.dirname(hist_path), exist_ok=True)
-    json.dump({"mobileVisits": history, "scores": score_hist, "trailScores": trail_hist},
+    json.dump({"mobileVisits": history, "mobileVisitsHourly": hourly_hist,
+               "scores": score_hist, "trailScores": trail_hist},
               open(hist_path, "w"), indent=1, sort_keys=True)
     by_day = history
     total_since_start = sum(history.values())
