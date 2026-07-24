@@ -39,6 +39,12 @@ PING_FILTER = ('clientRequestPath_like: "/ping/completion/%", '
 VIEW_FILTER = ('clientRequestPath_like: "/ping/view/%", '
                'clientDeviceType: "mobile", clientCountryName: "US", AND:' + UA_FILTER)
 
+# Apollo Trail (the secret game at /trail/, added 2026-07-23) counts the same
+# two ways: /ping/view/trail rides the view census above; finished runs ping
+# /ping/trail-completion/<score> once per new score per device.
+TRAIL_PING_FILTER = ('clientRequestPath_like: "/ping/trail-completion/%", '
+                     'clientDeviceType: "mobile", clientCountryName: "US", AND:' + UA_FILTER)
+
 
 def view_path(ping_id):
     """Map a view-ping id back to the page path ('slides-04-x' -> '/slides/04-x.html')."""
@@ -141,6 +147,7 @@ def main():
         raw_hist = {"mobileVisits": raw_hist, "scores": {}}
     history = raw_hist["mobileVisits"]
     score_hist = raw_hist.setdefault("scores", {})
+    trail_hist = raw_hist.setdefault("trailScores", {})
 
     # Free-plan adaptive queries are capped at a 1-day range, so fetch each day separately.
     days = []
@@ -167,8 +174,19 @@ def main():
     for score, n in todays_scores.items():
         day_scores[score] = max(day_scores.get(score, 0), n)
 
+    # Trail score census — same shape, separate tally (secret game ≠ mission stats)
+    trail_today = {}
+    for g in adaptive(ZONE_APOLLO, f'datetime_geq: "{midnight}", {TRAIL_PING_FILTER}',
+                      "clientRequestPath", limit=30):
+        m = re.search(r"/ping/trail-completion/(\d+)$", g["dimensions"]["clientRequestPath"])
+        if m and 0 <= int(m.group(1)) <= 10:
+            trail_today[m.group(1)] = trail_today.get(m.group(1), 0) + g["count"]
+    trail_day = trail_hist.setdefault(str(today), {})
+    for score, n in trail_today.items():
+        trail_day[score] = max(trail_day.get(score, 0), n)
+
     os.makedirs(os.path.dirname(hist_path), exist_ok=True)
-    json.dump({"mobileVisits": history, "scores": score_hist},
+    json.dump({"mobileVisits": history, "scores": score_hist, "trailScores": trail_hist},
               open(hist_path, "w"), indent=1, sort_keys=True)
     by_day = history
     total_since_start = sum(history.values())
@@ -183,6 +201,15 @@ def main():
                             "v": sum(n for sc, n in all_scores.items() if lo <= sc <= hi)})
     completions_today = sum(todays_scores.values())
 
+    # Trail rollup: same rank tiers (the game mirrors app.js scoring exactly)
+    trail_scores_all = {}
+    for day in trail_hist.values():
+        for score, n in day.items():
+            trail_scores_all[int(score)] = trail_scores_all.get(int(score), 0) + n
+    trail_ranks = [{"emoji": emoji, "name": name,
+                    "v": sum(n for sc, n in trail_scores_all.items() if lo <= sc <= hi)}
+                   for lo, hi, emoji, name in RANKS]
+
     country_rows = [g for g in adaptive(ZONE_APOLLO, f'datetime_geq: "{midnight}", {HUMAN_FILTER}',
                                         "clientCountryName", order="sum_visits_DESC")
                     if g["sum"]["visits"] > 0]
@@ -193,10 +220,14 @@ def main():
                          "clientRequestPath", order="count_DESC", limit=60)
     all_verified = sum(g["sum"]["visits"] for g in adaptive(
         ZONE_APOLLO, f'datetime_geq: "{midnight}", {HUMAN_FILTER}', "clientDeviceType"))
-    page_rows, completion_row, completions, page_loads = [], None, 0, 0
+    page_rows, completion_row, completions, page_loads, trail_found = [], None, 0, 0, 0
     for g in raw_pages:
         m = re.match(r"/ping/view/([\w-]+)$", g["dimensions"]["clientRequestPath"])
         if not m:
+            continue
+        if m.group(1) == "trail":
+            # the secret game gets its own card, not a row in the mission funnel
+            trail_found = g["count"]
             continue
         name, label = friendly_page(view_path(m.group(1)))
         page_loads += g["count"]
@@ -243,6 +274,8 @@ def main():
         "wsVisits": ws_visits,
         "days": days,
         "pages": pages,
+        "trail": {"foundToday": trail_found, "finishedToday": sum(trail_today.values()),
+                  "finishedTotal": sum(trail_scores_all.values()), "ranks": trail_ranks},
     }
 
     path = os.path.join(os.path.dirname(__file__), "..", "index.html")
