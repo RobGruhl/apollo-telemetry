@@ -41,10 +41,15 @@ PING_FILTER = ('clientRequestPath_like: "/ping/completion/%", '
 VIEW_FILTER = ('clientRequestPath_like: "/ping/view/%", '
                'clientDeviceType: "mobile", clientCountryName: "US", AND:' + UA_FILTER)
 
-# Apollo Trail (the secret game at /trail/, added 2026-07-23) counts the same
-# two ways: /ping/view/trail rides the view census above; finished runs ping
+# Apollo Trail (the secret game at /trail/, added 2026-07-23) counts three
+# ways: /ping/view/trail rides the view census above (every device that opened
+# the game); /ping/view/trail-tap (since 2026-07-26) marks the subset who got
+# there by tapping the hidden "Oregon Trail" phrase in the landing-page mission
+# copy rather than typing the URL; finished runs ping
 # /ping/trail-completion/<score> once per new score per device.
 TRAIL_PING_FILTER = ('clientRequestPath_like: "/ping/trail-completion/%", '
+                     'clientDeviceType: "mobile", clientCountryName: "US", AND:' + UA_FILTER)
+TRAIL_VIEW_FILTER = ('clientRequestPath_like: "/ping/view/trail%", '
                      'clientDeviceType: "mobile", clientCountryName: "US", AND:' + UA_FILTER)
 
 
@@ -199,9 +204,27 @@ def main():
     for score, n in trail_today.items():
         trail_day[score] = max(trail_day.get(score, 0), n)
 
+    # Trail discovery census: found the game at all vs. found it via the hidden
+    # phrase (the tap door). View pings age out of Cloudflare after 8 days, so
+    # per-day counts live in history.json; settled past days are never re-queried.
+    trail_view_hist = raw_hist.setdefault("trailViews", {})
+    for i in range(6, -1, -1):
+        d = today - timedelta(days=i)
+        if str(d) < TELEMETRY_START or (str(d) in trail_view_hist and d != today):
+            continue
+        day_range = (f'datetime_geq: "{d}T05:00:00Z", '
+                     f'datetime_lt: "{d + timedelta(days=1)}T05:00:00Z", ')
+        rec = trail_view_hist.setdefault(str(d), {"found": 0, "tap": 0})
+        for g in adaptive(ZONE_APOLLO, day_range + TRAIL_VIEW_FILTER, "clientRequestPath"):
+            p = g["dimensions"]["clientRequestPath"]
+            key = "tap" if p.endswith("/trail-tap") else "found" if p.endswith("/trail") else None
+            if key:
+                rec[key] = max(rec[key], g["count"])
+
     os.makedirs(os.path.dirname(hist_path), exist_ok=True)
     json.dump({"mobileVisits": history, "mobileVisitsHourly": hourly_hist,
-               "scores": score_hist, "trailScores": trail_hist},
+               "scores": score_hist, "trailScores": trail_hist,
+               "trailViews": trail_view_hist},
               open(hist_path, "w"), indent=1, sort_keys=True)
     by_day = history
     total_since_start = sum(history.values())
@@ -235,14 +258,14 @@ def main():
                          "clientRequestPath", order="count_DESC", limit=60)
     all_verified = sum(g["sum"]["visits"] for g in adaptive(
         ZONE_APOLLO, f'datetime_geq: "{midnight}", {HUMAN_FILTER}', "clientDeviceType"))
-    page_rows, completion_row, completions, page_loads, trail_found = [], None, 0, 0, 0
+    page_rows, completion_row, completions, page_loads = [], None, 0, 0
     for g in raw_pages:
         m = re.match(r"/ping/view/([\w-]+)$", g["dimensions"]["clientRequestPath"])
         if not m:
             continue
-        if m.group(1) == "trail":
-            # the secret game gets its own card, not a row in the mission funnel
-            trail_found = g["count"]
+        if m.group(1) in ("trail", "trail-tap"):
+            # the secret game gets its own card (counted above via
+            # TRAIL_VIEW_FILTER), never a row in the mission funnel
             continue
         name, label = friendly_page(view_path(m.group(1)))
         page_loads += g["count"]
@@ -289,7 +312,11 @@ def main():
         "wsVisits": ws_visits,
         "days": days,
         "pages": pages,
-        "trail": {"foundToday": trail_found, "finishedToday": sum(trail_today.values()),
+        "trail": {"foundToday": trail_view_hist.get(str(today), {}).get("found", 0),
+                  "tapToday": trail_view_hist.get(str(today), {}).get("tap", 0),
+                  "foundTotal": sum(r["found"] for r in trail_view_hist.values()),
+                  "tapTotal": sum(r["tap"] for r in trail_view_hist.values()),
+                  "finishedToday": sum(trail_today.values()),
                   "finishedTotal": sum(trail_scores_all.values()), "ranks": trail_ranks},
     }
 
