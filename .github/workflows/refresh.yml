@@ -2,11 +2,24 @@ name: Refresh telemetry
 
 on:
   schedule:
-    - cron: "39 * * * *"
+    # Four shots an hour, because GitHub's scheduler is best-effort and silently
+    # drops fires under load. Measured delivery on the hourly ":39" cron during
+    # jamboree week: 13 runs on Jul 26, 9 on Jul 27, 5 in 15 h on Jul 28 —
+    # roughly 40% delivery with 2-3.5 h gaps. Extra entries are free (public
+    # repo) and each one is another lottery ticket. A launchd job on Rob's
+    # laptop also fires workflow_dispatch every 30 min while it's awake —
+    # dispatch events are processed reliably, unlike cron fires.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
+
+# Schedule fires and laptop dispatches can land at the same time; queue them
+# so two runs never race each other's push.
+concurrency:
+  group: refresh
+  cancel-in-progress: false
 
 jobs:
   refresh:
@@ -25,5 +38,6 @@ jobs:
             git config user.name "telemetry-bot"
             git config user.email "13952844+RobGruhl@users.noreply.github.com"
             git commit -am "Telemetry refresh $(date -u +%Y-%m-%dT%H:%MZ)"
+            git pull --rebase origin main
             git push
           fi

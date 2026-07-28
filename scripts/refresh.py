@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Regenerate the DATA block in index.html from Cloudflare analytics.
 
-Runs hourly via GitHub Actions (.github/workflows/refresh.yml). Reads the
-read-only analytics token from CLOUDFLARE_READ_TOKEN. Stdlib only.
+Runs four times an hour via GitHub Actions cron plus laptop-fired
+workflow_dispatch (.github/workflows/refresh.yml — see the comment there for
+why both). Reads the read-only analytics token from CLOUDFLARE_READ_TOKEN.
+Stdlib only.
 """
 import json
 import os

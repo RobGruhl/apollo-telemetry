@@ -110,6 +110,7 @@
   }
   .meta { color: var(--ink-2); font-size: 14px; margin: 0; }
   .meta .mono { font-size: 13px; }
+  .meta .stale { color: var(--accent); font-weight: 650; }
 
   .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 26px; }
   .pill {
@@ -702,6 +703,21 @@
   // ---- fill header, tiles, notes from DATA ----
   document.getElementById("snapshot-local").textContent = DATA.snapshotLocal;
   document.getElementById("snapshot-utc").textContent = "SNAPSHOT " + DATA.snapshotUTC;
+
+  // A stalled refresh looks exactly like a quiet day — both show yesterday's
+  // numbers. Say so out loud past 90 min: the job aims for every 15 min, so
+  // 90 min means several fires in a row went missing.
+  // (":00" keeps older Safari's Date.parse happy.)
+  (function markStaleSnapshot() {
+    const ageMin = (Date.now() - Date.parse(DATA.snapshotUTC.replace("Z", ":00Z"))) / 60000;
+    if (!(ageMin > 90)) return;
+    const el = document.getElementById("snapshot-local");
+    const hrs = Math.floor(ageMin / 60);
+    el.classList.add("stale");
+    el.textContent += ` · ${hrs}h stale`;
+    el.title = `The refresh job last published ${hrs}h ago — these numbers are not current.`;
+  })();
+
   document.getElementById("t-visits").textContent = DATA.tiles.visits;
   document.getElementById("t-pageloads").textContent = DATA.tiles.pageLoads;
   document.getElementById("t-total").textContent = DATA.tiles.total;
