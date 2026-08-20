@@ -17,7 +17,9 @@ from datetime import datetime, timedelta, timezone
 TOKEN = os.environ["CLOUDFLARE_READ_TOKEN"]
 ZONE_APOLLO = "878135f576ba082913c9b40ad05e500d"      # apollo13.quest
 ZONE_SKELETON = "e96996f293c70590b9a5e509277e61ed"    # walkingskeleton.org
+ZONE_NSC = "51c5d807aa6566c53c738c13fb69572b"         # nospoilercycling.com
 TELEMETRY_START = "2026-07-21"
+NSC_START = "2026-08-20"  # day the zone went behind the Cloudflare proxy
 
 # Only successful page requests from real-looking browsers count as "verified".
 HUMAN_FILTER = (
@@ -28,6 +30,21 @@ HUMAN_FILTER = (
 )
 
 SCOUT_FILTER = HUMAN_FILTER + ', clientDeviceType: "mobile", clientCountryName: "US"'
+
+# NSC page views: human filter plus asset-suffix exclusions, so shared.css and
+# friends don't inflate the count. (edgeResponseContentTypeName would be the
+# clean way, but free-plan zones don't expose that field in adaptive groups.)
+NSC_HTML_FILTER = (
+    'edgeResponseStatus: 200, '
+    'AND: [{userAgent_notlike: "%Headless%"}, {userAgent_notlike: "%Go-http-client%"}, '
+    '{userAgent_notlike: "%curl%"}, {userAgent_notlike: "%bot%"}, {userAgent_notlike: "%python%"}, '
+    '{userAgent_notlike: "%spider%"}, {userAgent_notlike: "%crawl%"}, '
+    '{clientRequestPath_notlike: "%.css"}, {clientRequestPath_notlike: "%.js"}, '
+    '{clientRequestPath_notlike: "%.json"}, {clientRequestPath_notlike: "%.ico"}, '
+    '{clientRequestPath_notlike: "%.png"}, {clientRequestPath_notlike: "%.jpg"}, '
+    '{clientRequestPath_notlike: "%.svg"}, {clientRequestPath_notlike: "%.xml"}, '
+    '{clientRequestPath_notlike: "%.txt"}, {clientRequestPath_notlike: "%.webmanifest"}]'
+)
 
 # Score-census pings are deliberate 404s at /ping/completion/<score> — status filter
 # must not apply; UA/device/country filters still keep bots out of the census.
@@ -139,6 +156,113 @@ def friendly_page(path):
             name = f"Decision {DECISION_NUMBERS[num]} · {name}"
         return name, f"/slides/{num}"
     return stem, path
+
+
+def nsc_page_name(path):
+    """Friendly label for a nospoilercycling.com path."""
+    if path in ("/", "/index.html"):
+        return "Calendar"
+    stem = path.rsplit("/", 1)[-1].removesuffix(".html")
+    words = stem.replace("-", " ")
+    if path.startswith("/race-details/"):
+        return words
+    if path.startswith("/results/"):
+        return "Results · " + words
+    if path.startswith("/riders-women/"):
+        return "Rider (W) · " + words.title()
+    if path.startswith("/riders/"):
+        return "Rider · " + words.title()
+    if path == "/riders.html":
+        return "Riders index (men)"
+    if path == "/riders-women.html":
+        return "Riders index (women)"
+    return words or path
+
+
+def refresh_nsc(now):
+    """No Spoiler Cycling dashboard (nsc.html) — separate audience, separate page.
+
+    Differences from the apollo numbers: UTC days (cycling is a global-audience
+    site, no jamboree-evening concern), no mobile/US narrowing, and page views
+    exclude asset requests so shared.css/JS fetches don't inflate the count.
+    The site itself ships no beacons — every number here is Cloudflare edge
+    counting, same privacy stance as apollo13.quest.
+    """
+    nsc_html_filter = NSC_HTML_FILTER
+    today = now.date()
+
+    hist_path = os.path.join(os.path.dirname(__file__), "..", "data", "nsc-history.json")
+    hist = json.load(open(hist_path)) if os.path.exists(hist_path) else {}
+    visits_h = hist.setdefault("visits", {})
+    views_h = hist.setdefault("views", {})
+    uniq_h = hist.setdefault("uniques", {})
+
+    days = []
+    for i in range(13, -1, -1):
+        d = today - timedelta(days=i)
+        ds = str(d)
+        if ds < NSC_START:
+            days.append({"d": d.strftime("%b %-d"), "visits": None, "views": None})
+            continue
+        # Days two-plus days old are settled in history — don't re-query what
+        # Cloudflare's 8-day adaptive retention will eventually forget anyway.
+        if ds not in visits_h or d >= today - timedelta(days=1):
+            day_range = (f'datetime_geq: "{ds}T00:00:00Z", '
+                         f'datetime_lt: "{d + timedelta(days=1)}T00:00:00Z", ')
+            rows = adaptive(ZONE_NSC, day_range + nsc_html_filter, "")
+            visits_h[ds] = max(sum(g["sum"]["visits"] for g in rows), visits_h.get(ds, 0))
+            views_h[ds] = max(sum(g["count"] for g in rows), views_h.get(ds, 0))
+            rollup = gql(f'{{ viewer {{ zones(filter: {{zoneTag: "{ZONE_NSC}"}}) {{ '
+                         f'httpRequests1dGroups(limit: 5, filter: {{date: "{ds}"}}) '
+                         f'{{ uniq {{ uniques }} }} }} }} }}')["httpRequests1dGroups"]
+            uniq_h[ds] = max(rollup[0]["uniq"]["uniques"] if rollup else 0, uniq_h.get(ds, 0))
+        days.append({"d": d.strftime("%b %-d"),
+                     "visits": visits_h.get(ds, 0), "views": views_h.get(ds, 0)})
+
+    # Top pages over the adaptive-retention window (last 7 days), merged per day.
+    pages = {}
+    for i in range(6, -1, -1):
+        d = today - timedelta(days=i)
+        if str(d) < NSC_START:
+            continue
+        day_range = (f'datetime_geq: "{d}T00:00:00Z", '
+                     f'datetime_lt: "{d + timedelta(days=1)}T00:00:00Z", ')
+        for g in adaptive(ZONE_NSC, day_range + nsc_html_filter, "clientRequestPath",
+                          limit=30, order="count_DESC"):
+            p = g["dimensions"]["clientRequestPath"]
+            agg = pages.setdefault(p, {"views": 0, "visits": 0})
+            agg["views"] += g["count"]
+            agg["visits"] += g["sum"]["visits"]
+    top = [{"path": p, "name": nsc_page_name(p), "views": v["views"], "visits": v["visits"]}
+           for p, v in sorted(pages.items(), key=lambda kv: -kv[1]["views"])[:15]]
+
+    ts = str(today)
+    y_max = next(m for m in (20, 50, 100, 200, 500, 1000, 2000, 5000)
+                 if m > max((d["visits"] or 0) for d in days))
+    data = {
+        "snapshotUTC": now.strftime("%Y-%m-%d %H:%M UTC"),
+        "start": NSC_START,
+        "yMax": y_max,
+        "tiles": {"visitsToday": visits_h.get(ts, 0), "viewsToday": views_h.get(ts, 0),
+                  "uniquesToday": uniq_h.get(ts, 0),
+                  "visitsTotal": sum(visits_h.values())},
+        "days": days,
+        "pages": top,
+    }
+
+    path = os.path.join(os.path.dirname(__file__), "..", "nsc.html")
+    src = open(path).read()
+    block = ("  // ===== DATA:BEGIN ===== (regenerated by scripts/refresh.py — do not hand-edit "
+             "between markers)\n  const DATA = " + json.dumps(data, ensure_ascii=False, indent=2)
+             + ";\n  // ===== DATA:END =====")
+    out = re.sub(r"  // ===== DATA:BEGIN =====.*?// ===== DATA:END =====", block, src, flags=re.S)
+    json.dump(hist, open(hist_path, "w"), indent=1, sort_keys=True)
+    if out == src:
+        print("nsc: no change")
+        return
+    open(path, "w").write(out)
+    print(f"nsc refreshed: {data['tiles']['visitsToday']} visits today, "
+          f"{data['tiles']['viewsToday']} page views, {data['tiles']['visitsTotal']} total")
 
 
 def main():
@@ -336,3 +460,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # NSC runs after apollo so a cycling-side failure can never block the
+    # jamboree numbers; it still fails the workflow loudly so we notice.
+    refresh_nsc(datetime.now(timezone.utc))

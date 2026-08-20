@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="robots" content="noindex"/>
+<title>No Spoiler Cycling · Telemetry</title>
+<style>
+  :root{
+    --paper:#f4f1ea; --paper-2:#ebe6db; --ink:#14110f; --ink-2:#3a3530; --ink-3:#6b635a;
+    --rule:#14110f; --rule-soft:rgba(20,17,15,.18); --bar:#3556bd;
+    --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+    --font-mono:ui-monospace,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{--paper:#0e0d0c; --paper-2:#1a1815; --ink:#f2ede2; --ink-2:#c9c2b4; --ink-3:#7e766b;
+          --rule:#f2ede2; --rule-soft:rgba(242,237,226,.18); --bar:#6b87e0}
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);font-family:var(--font-sans)}
+  .rainbow{height:6px;background:linear-gradient(90deg,#1f3a8a 0 20%,#c8102e 20% 40%,#14110f 40% 60%,#f5c518 60% 80%,#2e7d4f 80% 100%)}
+  .frame{max-width:860px;margin:0 auto;padding:0 20px 60px}
+  header{display:flex;justify-content:space-between;align-items:baseline;padding:22px 0 14px;border-bottom:1px solid var(--rule)}
+  .wordmark{font-weight:800;font-size:20px;letter-spacing:-.02em}
+  .wordmark .slash{color:#c8102e}
+  .wordmark .sub{display:block;font-family:var(--font-mono);font-weight:400;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-top:4px}
+  .stamp{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);text-align:right}
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:26px 0 8px}
+  @media (max-width:640px){.tiles{grid-template-columns:repeat(2,1fr)}}
+  .tile{border:1px solid var(--rule-soft);background:var(--paper-2);padding:14px 16px}
+  .tile .k{font-family:var(--font-mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3)}
+  .tile .v{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-weight:700;font-size:30px;letter-spacing:-.02em;margin-top:6px}
+  h2{font-size:15px;letter-spacing:.01em;margin:34px 0 4px}
+  .note{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.08em;color:var(--ink-3);margin:0 0 14px}
+  .chart{position:relative;height:220px;border-bottom:1px solid var(--rule);margin-top:18px}
+  .grid{position:absolute;left:0;right:0;border-top:1px dashed var(--rule-soft);pointer-events:none}
+  .grid .gl{position:absolute;right:0;top:-14px;font-family:var(--font-mono);font-size:9.5px;color:var(--ink-3)}
+  .bars{position:absolute;inset:0;display:flex;align-items:flex-end;gap:2px}
+  .bcell{flex:1;height:100%;display:flex;align-items:flex-end;justify-content:center;position:relative;cursor:default}
+  .bar{width:70%;max-width:34px;background:var(--bar);border-radius:4px 4px 0 0;min-height:0}
+  .bcell.empty .bar{background:transparent}
+  .blabel{position:absolute;top:100%;margin-top:6px;font-family:var(--font-mono);font-size:9px;letter-spacing:.04em;color:var(--ink-3);white-space:nowrap}
+  .dlabel{position:absolute;transform:translateY(-16px);font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--ink-2)}
+  .tip{position:absolute;z-index:2;bottom:100%;margin-bottom:8px;left:50%;transform:translateX(-50%);
+       background:var(--ink);color:var(--paper);font-family:var(--font-mono);font-size:10.5px;
+       padding:6px 9px;border-radius:3px;white-space:nowrap;display:none;pointer-events:none}
+  .bcell:hover .tip{display:block}
+  .bcell:hover .bar{opacity:.85}
+  .xlabels{height:26px}
+  details{margin-top:30px}
+  summary{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);cursor:pointer}
+  table{border-collapse:collapse;width:100%;margin-top:12px}
+  th{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);text-align:left;font-weight:600;padding:6px 10px 6px 0;border-bottom:1px solid var(--rule)}
+  td{font-size:13.5px;padding:7px 10px 7px 0;border-bottom:1px solid var(--rule-soft)}
+  td.n,th.n{text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+  .path{font-family:var(--font-mono);font-size:11px;color:var(--ink-3)}
+  footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--rule);font-family:var(--font-mono);font-size:10.5px;letter-spacing:.06em;color:var(--ink-3);line-height:1.7}
+  footer a{color:inherit;text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="rainbow"></div>
+<div class="frame">
+  <header>
+    <div class="wordmark">No<span class="slash">/</span>Spoiler Cycling
+      <span class="sub">Site telemetry · Cloudflare edge counting</span>
+    </div>
+    <div class="stamp">Snapshot <b id="snap">—</b><br/>counting since <span id="since">—</span></div>
+  </header>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Visits today</div><div class="v" id="t-visits">—</div></div>
+    <div class="tile"><div class="k">Page views today</div><div class="v" id="t-views">—</div></div>
+    <div class="tile"><div class="k">Unique IPs today</div><div class="v" id="t-uniques">—</div></div>
+    <div class="tile"><div class="k">Visits since start</div><div class="v" id="t-total">—</div></div>
+  </div>
+
+  <h2>Visits per day</h2>
+  <p class="note">UTC days · verified-human filter · HTML pages only</p>
+  <div class="chart" id="chart"></div>
+  <div class="xlabels"></div>
+  <details>
+    <summary>Data table</summary>
+    <table aria-label="Visits and page views per day">
+      <thead><tr><th>Day (UTC)</th><th class="n">Visits</th><th class="n">Page views</th></tr></thead>
+      <tbody id="daytable"></tbody>
+    </table>
+  </details>
+
+  <h2>Top pages</h2>
+  <p class="note">Last 7 days · HTML pages, verified-human filter</p>
+  <table aria-label="Most viewed pages, last 7 days">
+    <thead><tr><th>#</th><th>Page</th><th class="n">Views</th><th class="n">Visits</th></tr></thead>
+    <tbody id="pages"></tbody>
+  </table>
+
+  <footer>
+    Counted at the Cloudflare edge for <a href="https://nospoilercycling.com">nospoilercycling.com</a> —
+    the site itself ships no analytics scripts, no cookies, no beacons.
+    "Visits" and "views" exclude obvious bots (headless browsers, crawlers, scripted clients).
+    Free-plan per-path detail is retained 8 days; the day series persists in this repo's
+    <span class="path">data/nsc-history.json</span>.
+    · <a href="index.html">apollo13.quest telemetry</a>
+  </footer>
+</div>
+
+<script>
+  // ===== DATA:BEGIN ===== (regenerated by scripts/refresh.py — do not hand-edit between markers)
+  const DATA = {
+  "snapshotUTC": "2026-08-20 02:51 UTC",
+  "start": "2026-08-20",
+  "yMax": 20,
+  "tiles": {
+    "visitsToday": 3,
+    "viewsToday": 3,
+    "uniquesToday": 0,
+    "visitsTotal": 3
+  },
+  "days": [
+    {
+      "d": "Aug 7",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 8",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 9",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 10",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 11",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 12",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 13",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 14",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 15",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 16",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 17",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 18",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 19",
+      "visits": null,
+      "views": null
+    },
+    {
+      "d": "Aug 20",
+      "visits": 3,
+      "views": 3
+    }
+  ],
+  "pages": [
+    {
+      "path": "/",
+      "name": "Calendar",
+      "views": 3,
+      "visits": 3
+    }
+  ]
+};
+  // ===== DATA:END =====
+
+  const $ = id => document.getElementById(id);
+  const fmt = n => (n ?? 0).toLocaleString("en-US");
+
+  $("snap").textContent = DATA.snapshotUTC;
+  $("since").textContent = DATA.start;
+  $("t-visits").textContent = fmt(DATA.tiles.visitsToday);
+  $("t-views").textContent = fmt(DATA.tiles.viewsToday);
+  $("t-uniques").textContent = fmt(DATA.tiles.uniquesToday);
+  $("t-total").textContent = fmt(DATA.tiles.visitsTotal);
+
+  const chart = $("chart");
+  const yMax = DATA.yMax || 20;
+  // Recessive gridlines at 25/50/75/100% with right-edge value labels.
+  [0.25, 0.5, 0.75, 1].forEach(f => {
+    const g = document.createElement("div");
+    g.className = "grid";
+    g.style.bottom = (f * 100) + "%";
+    g.innerHTML = `<span class="gl">${fmt(Math.round(yMax * f))}</span>`;
+    chart.appendChild(g);
+  });
+  const bars = document.createElement("div");
+  bars.className = "bars";
+  const maxV = Math.max(0, ...DATA.days.map(d => d.visits ?? 0));
+  DATA.days.forEach((d, i) => {
+    const cell = document.createElement("div");
+    const v = d.visits;
+    cell.className = "bcell" + (v == null ? " empty" : "");
+    const isLast = i === DATA.days.length - 1;
+    const isMax = v != null && v === maxV && maxV > 0;
+    cell.innerHTML =
+      `<div class="bar" style="height:${v == null ? 0 : Math.max(v / yMax * 100, v > 0 ? 2 : 0)}%"></div>` +
+      ((i % 2 === 0 || isLast) ? `<span class="blabel">${d.d}</span>` : "") +
+      (v != null && (isMax || isLast) && v > 0 ? `<span class="dlabel" style="bottom:${v / yMax * 100}%">${fmt(v)}</span>` : "") +
+      (v == null ? "" : `<span class="tip">${d.d} · ${fmt(v)} visits · ${fmt(d.views)} views</span>`);
+    bars.appendChild(cell);
+  });
+  chart.appendChild(bars);
+
+  $("daytable").innerHTML = DATA.days.map(d =>
+    `<tr><td>${d.d}</td><td class="n">${d.visits == null ? "—" : fmt(d.visits)}</td>` +
+    `<td class="n">${d.views == null ? "—" : fmt(d.views)}</td></tr>`).join("");
+
+  $("pages").innerHTML = DATA.pages.map((p, i) =>
+    `<tr><td class="n">${i + 1}</td><td>${p.name} <span class="path">${p.path}</span></td>` +
+    `<td class="n">${fmt(p.views)}</td><td class="n">${fmt(p.visits)}</td></tr>`).join("") ||
+    `<tr><td colspan="4" style="color:var(--ink-3)">No page data yet — counting starts once the zone is active.</td></tr>`;
+</script>
+</body>
+</html>
