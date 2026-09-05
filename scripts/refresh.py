@@ -206,7 +206,12 @@ def refresh_nsc(now):
             continue
         # Days two-plus days old are settled in history — don't re-query what
         # Cloudflare's 8-day adaptive retention will eventually forget anyway.
-        if ds not in visits_h or d >= today - timedelta(days=1):
+        # Exception: a zero-visit day still inside retention is a suspected
+        # partial (a run that fired at 00:0x UTC and then no runs for days —
+        # 2026-08-31 froze at 2 views when the workflow was disabled), so
+        # re-query it; max() means a genuine settled day can only go up.
+        suspect = visits_h.get(ds, 0) == 0 and d >= today - timedelta(days=7)
+        if ds not in visits_h or suspect or d >= today - timedelta(days=1):
             day_range = (f'datetime_geq: "{ds}T00:00:00Z", '
                          f'datetime_lt: "{d + timedelta(days=1)}T00:00:00Z", ')
             rows = adaptive(ZONE_NSC, day_range + nsc_html_filter, "")
